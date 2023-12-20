@@ -1,3 +1,4 @@
+use crate::system_listener::SystemListener;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::{task::JoinHandle, time};
@@ -5,7 +6,7 @@ use tokio::{task::JoinHandle, time};
 pub async fn listen_simstatus() {
     let mut interval = time::interval(time::Duration::from_secs(10));
 
-    let mut system_listeners: HashMap<i32, JoinHandle<()>> = HashMap::new();
+    let mut system_listeners: HashMap<i32, SystemListener> = HashMap::new();
 
     loop {
         interval.tick().await;
@@ -22,10 +23,10 @@ pub async fn listen_simstatus() {
         println!("parsed simstatus");
 
         // remove stale system listeners
-        system_listeners.retain(|key, value| {
-            let task_finished = value.is_finished();
+        system_listeners.retain(|system_id, system_listener| {
+            let task_finished = system_listener.handle.is_finished();
             if task_finished {
-                println!("{} deleted system listener", key);
+                println!("{} deleted system listener", system_id);
             }
             !task_finished
         });
@@ -39,11 +40,10 @@ pub async fn listen_simstatus() {
                 .for_each(|system| {
                     let system_listeners_ref = &mut system_listeners;
                     if !system_listeners_ref.contains_key(&system.id) {
-                        let handle = tokio::spawn(crate::system_listener::listen_system(
-                            server.address.clone(),
-                            system.id,
-                        ));
-                        system_listeners_ref.insert(system.id, handle);
+                        let system_listener =
+                            SystemListener::new(server.address.clone(), system.id);
+
+                        system_listeners_ref.insert(system.id, system_listener);
                         println!("{} started system listener", system.id);
                     }
                 })

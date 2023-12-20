@@ -8,7 +8,11 @@ use tokio_tungstenite::{
 
 use std::{fmt::Binary, io::Error};
 
-pub async fn listen_system(server_address: String, system_id: i32) {
+async fn listen_system(
+    server_address: String,
+    system_id: i32,
+    data: Arc<Mutex<SystemListenerData>>,
+) {
     // establish ws streams
 
     let (ip, port) = server_address.split_once(':').unwrap();
@@ -55,9 +59,15 @@ pub async fn listen_system(server_address: String, system_id: i32) {
 
                     match BinaryDTO::parse(&binary) {
                         Ok(binary_dto) => match binary_dto {
-                            BinaryDTO::Binary200DTO(binary_200_dto) => {}
-                            BinaryDTO::Binary205DTO(binary_205_dto) => {}
-                            BinaryDTO::Binary206DTO(binary_206_dto) => {}
+                            BinaryDTO::Binary200DTO(binary_200_dto) => {
+                                data.lock().unwrap().binary_200_dto = Some(binary_200_dto);
+                            }
+                            BinaryDTO::Binary205DTO(binary_205_dto) => {
+                                data.lock().unwrap().binary_205_dto = Some(binary_205_dto);
+                            }
+                            BinaryDTO::Binary206DTO(binary_206_dto) => {
+                                data.lock().unwrap().binary_206_dto = Some(binary_206_dto);
+                            }
                         },
                         Err(e) => {
                             println!("{} error when parsing binary: {:?}", system_id, binary);
@@ -372,4 +382,29 @@ struct SystemListenerData {
     binary_200_dto: Option<Binary200DTO>,
     binary_205_dto: Option<Binary205DTO>,
     binary_206_dto: Option<Binary206DTO>,
+}
+
+use std::sync::{Arc, Mutex};
+use tokio::task::JoinHandle;
+
+pub struct SystemListener {
+    pub data: Arc<Mutex<SystemListenerData>>,
+    pub handle: JoinHandle<()>,
+}
+
+impl SystemListener {
+    pub fn new(server_address: String, system_id: i32) -> Self {
+        let data = Arc::new(Mutex::new(SystemListenerData {
+            binary_200_dto: None,
+            binary_205_dto: None,
+            binary_206_dto: None,
+        }));
+
+        let handle = tokio::spawn(listen_system(server_address, system_id, Arc::clone(&data)));
+
+        Self {
+            data: data,
+            handle: handle,
+        }
+    }
 }
