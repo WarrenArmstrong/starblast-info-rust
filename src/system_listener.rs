@@ -8,6 +8,11 @@ use tokio_tungstenite::{
 
 use std::{fmt::Binary, io::Error};
 
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+
+use std::future::Future;
+
 async fn listen_system(
     server_address: String,
     system_id: i32,
@@ -27,10 +32,10 @@ async fn listen_system(
         .await
         .expect(&format!("{} failed to connect", system_id));
 
-    println!(
-        "{} websocket handshake has been successfully completed",
-        system_id
-    );
+    // println!(
+    //     "{} websocket handshake has been successfully completed",
+    //     system_id
+    // );
 
     let (mut write, mut read) = ws_stream.split();
 
@@ -43,7 +48,32 @@ async fn listen_system(
         match message_result {
             Ok(message) => match message {
                 Message::Text(text) => {
-                    // println!("{} {:?}", system_id, text);
+                    // println!("{} {}", system_id, text);
+
+                    let ws_dto_result: Result<WSDTO, serde_json::Error> =
+                        serde_json::from_str(&text);
+
+                    match ws_dto_result {
+                        Ok(ws_dto) => match ws_dto {
+                            WSDTO::WSWelcomeDTO(ws_welcome_dto) => {
+                                data.lock().unwrap().ws_welcome_dto = Some(ws_welcome_dto);
+                                println!("{} parsed WSWelcome", system_id)
+                            }
+                            WSDTO::WSPlayerNameDTO(ws_player_name_dto) => {
+                                data.lock()
+                                    .unwrap()
+                                    .ws_player_name_dtos
+                                    .insert(ws_player_name_dto.data.id, ws_player_name_dto);
+                            }
+                            WSDTO::WSCannotJoin => {
+                                write.send(Message::Close(None)).await.unwrap();
+                                break;
+                            }
+                        },
+                        Err(e) => {
+                            println!("{} {} {}", system_id, e, text);
+                        }
+                    }
                 }
                 Message::Binary(binary) => {
                     let binary_dto_result = BinaryDTO::parse(&binary);
@@ -55,11 +85,67 @@ async fn listen_system(
                             ))
                             .await
                             .unwrap();
+
+                        let data_gaurd = data.lock().unwrap();
+
+                        for (k, v) in data_gaurd.ws_player_name_dtos.iter() {
+                            if v.data.player_name == "TEST123" {
+                                for player in
+                                    data_gaurd.binary_200_dto.as_ref().unwrap().players.iter()
+                                {
+                                    if player.id == v.data.id {
+                                        println!("{:?} {:?}", v.data, player);
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     match BinaryDTO::parse(&binary) {
                         Ok(binary_dto) => match binary_dto {
                             BinaryDTO::Binary200DTO(binary_200_dto) => {
+                                let binary_player_ids: HashSet<u8> = HashSet::from_iter(
+                                    binary_200_dto.players.iter().map(|player| player.id),
+                                );
+
+                                // let data_gaurd = data.lock().unwrap();
+
+                                data.lock()
+                                    .unwrap()
+                                    .ws_player_name_dtos
+                                    .retain(|id, _| binary_player_ids.contains(id));
+
+                                // let futures: Vec<Box<dyn Future>> = binary_200_dto
+                                //     .players
+                                //     .iter()
+                                //     .filter(|player| {
+                                //         !data_gaurd.ws_player_name_dtos.contains_key(&player.id)
+                                //     })
+                                //     .map(|player| write.send(Message::Text("test".into())))
+                                //     .collect();
+
+                                let current_player_ids: Vec<u8> = data
+                                    .lock()
+                                    .unwrap()
+                                    .ws_player_name_dtos
+                                    .keys()
+                                    .cloned()
+                                    .collect();
+
+                                for player in binary_200_dto.players.iter() {
+                                    if !current_player_ids.contains(&player.id) {
+                                        write
+                                        .send(Message::text(
+                                            serde_json::to_string(
+                                                &json!({"name": "get_name", "data": {"id": player.id}}),
+                                            )
+                                            .unwrap(),
+                                        ))
+                                        .await
+                                        .unwrap();
+                                    }
+                                }
+
                                 data.lock().unwrap().binary_200_dto = Some(binary_200_dto);
                             }
                             BinaryDTO::Binary205DTO(binary_205_dto) => {
@@ -93,16 +179,6 @@ async fn listen_system(
     println!("{} reached end of listener", system_id);
 }
 
-// write
-// .send(Message::text(
-//     serde_json::to_string(
-//         &json!({"name": "get_name", "data": {"id": player_sb_id}}),
-//     )
-//     .unwrap(),
-// ))
-// .await
-// .unwrap();
-
 fn get_initial_message(system_id: i32) -> String {
     let mut rng = rand::thread_rng();
 
@@ -111,50 +187,50 @@ fn get_initial_message(system_id: i32) -> String {
         .to_string();
 
     let default_names = vec![
-        "Arkady Darell",
-        "Bel Riose",
-        "Cleon I",
-        "Dors Venabili",
-        "Ebling Mis",
-        "Gaal Dornick",
-        "Hari Seldon",
-        "Hober Mallow",
-        "Janov Pelorat",
-        "The Mule",
-        "Preem Palver",
-        "R.D. Olivaw",
-        "R.G. Reventlov",
-        "Raych Seldon",
-        "Salvor Hardin",
-        "Wanda Seldon",
-        "Yugo Amaryl",
-        "James T. Kirk",
-        "Leonard McCoy",
-        "Hikaru Sulu",
-        "Montgomery Scott",
-        "Spock",
-        "Picard",
-        "Christine Chapel",
-        "Nyota Uhura",
-        "Pavel Chekov",
-        "Ford",
-        "Zaphod",
-        "Marvin",
-        "Anakin",
-        "Luke",
-        "Leia",
-        "Ackbar",
-        "Tarkin",
-        "Jabba",
-        "Rey",
-        "Kylo",
-        "Han",
-        "Vader",
+        "ARKADY DARELL",
+        "BEL RIOSE",
+        "CLEON I",
+        "DORS VENABILI",
+        "EBLING MIS",
+        "GAAL DORNICK",
+        "HARI SELDON",
+        "HOBER MALLOW",
+        "JANOV PELORAT",
+        "THE MULE",
+        "PREEM PALVER",
+        "R.D. OLIVAW",
+        "R.G. REVENTLOV",
+        "RAYCH SELDON",
+        "SALVOR HARDIN",
+        "WANDA SELDON",
+        "YUGO AMARYL",
+        "JAMES T. KIRK",
+        "LEONARD MCCOY",
+        "HIKARU SULU",
+        "MONTGOMERY SCOTT",
+        "SPOCK",
+        "PICARD",
+        "CHRISTINE CHAPEL",
+        "NYOTA UHURA",
+        "PAVEL CHEKOV",
+        "FORD",
+        "ZAPHOD",
+        "MARVIN",
+        "ANAKIN",
+        "LUKE",
+        "LEIA",
+        "ACKBAR",
+        "TARKIN",
+        "JABBA",
+        "REY",
+        "KYLO",
+        "HAN",
+        "VADER",
         "D.A.R.Y.L.",
         "HAL 9000",
-        "Lyta Alexander",
-        "Stephen Franklin",
-        "Lennier",
+        "LYTA ALEXANDER",
+        "STEPHEN FRANKLIN",
+        "LENNIER",
     ];
 
     let player_name = default_names.choose(&mut rng).unwrap().to_uppercase();
@@ -369,16 +445,202 @@ enum BinaryDTO {
 
 impl BinaryDTO {
     fn parse(binary: &[u8]) -> Result<Self, Error> {
-        Ok(match binary[0] {
-            200 => BinaryDTO::Binary200DTO(Binary200DTO::parse(binary)?),
-            205 => BinaryDTO::Binary205DTO(Binary205DTO::parse(binary)?),
-            206 => BinaryDTO::Binary206DTO(Binary206DTO::parse(binary)?),
+        Ok(match binary.get(0) {
+            Some(200) => BinaryDTO::Binary200DTO(Binary200DTO::parse(binary)?),
+            Some(205) => BinaryDTO::Binary205DTO(Binary205DTO::parse(binary)?),
+            Some(206) => BinaryDTO::Binary206DTO(Binary206DTO::parse(binary)?),
             _ => todo!(),
         })
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct WSPlayerNameCustomDTO {
+    badge: String,
+    finish: String,
+    laser: Option<String>,
+    hue: u16,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct WSPlayerNameDataDTO {
+    id: u8,
+    hue: u16,
+    friendly: u8,
+    player_name: String,
+    custom: Option<WSPlayerNameCustomDTO>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct WSPlayerNameDTO {
+    name: String,
+    data: WSPlayerNameDataDTO,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct WSWelcomeModuleDTO {
+    id: u8,
+    #[serde(rename = "type")]
+    module_type: String,
+    x: f64,
+    y: f64,
+    dir: u8,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct WSWelcomeStationDTO {
+    modules: Vec<WSWelcomeModuleDTO>,
+    phase: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct WSWelcomeTeamDTO {
+    faction: String,
+    base_name: String,
+    hue: u16,
+    station: WSWelcomeStationDTO,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct WSWelcomeModeDTO {
+    max_players: i32,
+    crystal_value: f64,
+    crystal_drop: i32,
+    map_size: i32,
+    map_density: Option<i32>,
+    lives: i32,
+    max_level: i32,
+    friendly_colors: i32,
+    close_time: i32,
+    close_number: i32,
+    map_name: Option<String>,
+    unlisted: bool,
+    survival_time: i32,
+    survival_level: i32,
+    starting_ship: i32,
+    starting_ship_maxed: bool,
+    asteroids_strength: i32,
+    friction_ratio: f64,
+    speed_mod: f64,
+    rcs_toggle: bool,
+    weapon_drop: i32,
+    mines_self_destroy: bool,
+    mines_destroy_delay: i32,
+    healing_enabled: bool,
+    healing_ratio: f64,
+    shield_regen_factor: f64,
+    power_regen_factor: f64,
+    auto_refill: bool,
+    projectile_speed: f64,
+    strafe: f64,
+    release_crystal: bool,
+    large_grid: bool,
+    bouncing_lasers: i32,
+    max_tier_lives: i32,
+    auto_assign_teams: bool,
+    station_size: i32,
+    crystal_capacity: Vec<i32>,
+    deposit_shield: Vec<i32>,
+    spawning_shield: Vec<i32>,
+    structure_shield: Vec<i32>,
+    deposit_regen: Vec<i32>,
+    spawning_regen: Vec<i32>,
+    structure_regen: Vec<i32>,
+    repair_threshold: f64,
+    all_ships_can_dock: bool,
+    all_ships_can_respawn: bool,
+    id: String,
+    restore_ship: Option<bool>,
+    teams: Vec<WSWelcomeTeamDTO>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct WSWelcomeDataDTO {
+    version: i32,
+    seed: i32,
+    servertime: i32,
+    name: String,
+    systemid: i32,
+    size: i32,
+    mode: WSWelcomeModeDTO,
+    region: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct WSWelcomeDTO {
+    name: String,
+    data: WSWelcomeDataDTO,
+}
+
+#[derive(Debug, Serialize, Clone)]
+enum WSDTO {
+    WSWelcomeDTO(WSWelcomeDTO),
+    WSPlayerNameDTO(WSPlayerNameDTO),
+    WSCannotJoin,
+}
+
+use serde::{de, Deserializer};
+use serde_json::Value;
+
+impl<'de> Deserialize<'de> for WSDTO {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let v = Value::deserialize(deserializer)?;
+        match v.get("name").and_then(Value::as_str) {
+            Some("player_name") => {
+                let data = WSPlayerNameDTO::deserialize(v).map_err(de::Error::custom)?;
+                Ok(WSDTO::WSPlayerNameDTO(data))
+            }
+            Some("welcome") => {
+                let data = WSWelcomeDTO::deserialize(v).map_err(de::Error::custom)?;
+                Ok(WSDTO::WSWelcomeDTO(data))
+            }
+            Some("cannot_join") => Ok(WSDTO::WSCannotJoin),
+            _ => Err(serde::de::Error::unknown_variant(
+                v.get("name").unwrap().as_str().unwrap(),
+                &["player_name", "welcome", "cannot_join"],
+            )),
+        }
+    }
+}
+
+// struct WSDTO {
+//     name: String,
+//     data: Option<
+// }
+
+// #[derive(Debug, Serialize, Deserialize, Clone)]
+// enum WSDTOName {
+//     #[serde(rename = "welcome")]
+//     Welcome,
+//     #[serde(rename = "player_name")]
+//     PlayerName,
+//     #[serde(rename = "cannot_join")]
+//     CannotJoin,
+// }
+
+// #[derive(Debug, Serialize, Deserialize, Clone)]
+// struct WSDTO {
+//     name: String,
+//     data: Option<WSDTOData>,
+// }
+
+// impl WSDTO {
+//     fn parse(text: String) -> Result<Self, Error> {
+//         Ok(match binary.get(0) {
+//             Some(200) => BinaryDTO::Binary200DTO(Binary200DTO::parse(binary)?),
+//             Some(205) => BinaryDTO::Binary205DTO(Binary205DTO::parse(binary)?),
+//             Some(206) => BinaryDTO::Binary206DTO(Binary206DTO::parse(binary)?),
+//             _ => todo!(),
+//         })
+//     }
+// }
+
 struct SystemListenerData {
+    ws_welcome_dto: Option<WSWelcomeDTO>,
+    ws_player_name_dtos: HashMap<u8, WSPlayerNameDTO>,
     binary_200_dto: Option<Binary200DTO>,
     binary_205_dto: Option<Binary205DTO>,
     binary_206_dto: Option<Binary206DTO>,
@@ -395,6 +657,8 @@ pub struct SystemListener {
 impl SystemListener {
     pub fn new(server_address: String, system_id: i32) -> Self {
         let data = Arc::new(Mutex::new(SystemListenerData {
+            ws_welcome_dto: None,
+            ws_player_name_dtos: HashMap::new(),
             binary_200_dto: None,
             binary_205_dto: None,
             binary_206_dto: None,
