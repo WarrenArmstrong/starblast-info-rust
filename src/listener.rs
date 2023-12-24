@@ -1,88 +1,96 @@
-use crate::system_listener::SystemListener;
-use serde::{Deserialize, Serialize};
+mod dto;
+mod system_listener;
+
+use dto::ServerDTO;
+use std::{alloc::System, sync::Arc};
+use system_listener::SystemListener;
+use tokio::{
+    sync::watch::{self, Receiver, Sender},
+    task::JoinHandle,
+    time,
+};
+
 use std::collections::HashMap;
-use tokio::{task::JoinHandle, time};
 
-pub async fn listen_simstatus() {
-    let mut interval = time::interval(time::Duration::from_secs(10));
+use reqwest::Error;
 
-    let mut system_listeners: HashMap<i32, SystemListener> = HashMap::new();
+use self::dto::SimStatusDTO;
 
-    loop {
-        interval.tick().await;
+pub struct Starblast {}
 
-        let new_sim_status: Vec<ServerDTO> = reqwest::Client::new()
-            .get("https://starblast.io/simstatus.json")
-            .send()
-            .await
-            .expect("simstatus failed to send")
-            .json()
-            .await
-            .expect("simstatus failed to parse");
+pub struct Listener {
+    tx: Sender<Starblast>,
+    system_listeners: HashMap<i32, JoinHandle<()>>,
+}
 
-        println!("parsed simstatus");
+impl Listener {
+    pub fn new() -> Self {
+        let (tx, mut _rx) = watch::channel(Starblast {});
 
-        // remove stale system listeners
-        system_listeners.retain(|system_id, system_listener| {
-            let task_finished = system_listener.handle.is_finished();
-            if task_finished {
-                println!("{} deleted system listener", system_id);
-            }
-            !task_finished
-        });
+        Self {
+            tx: tx,
+            system_listeners: HashMap::new(),
+        }
+    }
 
-        // create new system listeners
-        new_sim_status.iter().for_each(|server| {
-            server
-                .systems
-                .iter()
-                .filter(|system| system.mode == "team")
-                .for_each(|system| {
-                    let system_listeners_ref = &mut system_listeners;
-                    if !system_listeners_ref.contains_key(&system.id) {
+    pub fn subscribe(self) -> Receiver<Starblast> {
+        self.tx.subscribe()
+    }
+
+    pub async fn listen(mut self) {
+        let mut interval = time::interval(time::Duration::from_secs(10));
+
+        loop {
+            interval.tick().await;
+
+            let response = match reqwest::Client::new()
+                .get("https://starblast.io/simstatus.json")
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    println!("Error sending request: {:?}", e);
+                    continue;
+                }
+            };
+
+            let simstatus = match response.json::<SimStatusDTO>().await {
+                Ok(simstatus) => simstatus,
+                Err(e) => {
+                    println!("Error parsing response: {:?}", e);
+                    continue;
+                }
+            };
+
+            println!("parsed simstatus {:?}", self.system_listeners.keys());
+
+            self.system_listeners.retain(|k, v| {
+                if v.is_finished() {
+                    println!("{} deleted system listener", k);
+                };
+                !v.is_finished()
+            });
+
+            // simstatus.servers.iter()
+
+            for server in simstatus.servers {
+                for system in server.systems {
+                    if system.mode == "team" && !self.system_listeners.contains_key(&system.id) {
                         let system_listener =
-                            SystemListener::new(server.address.clone(), system.id);
+                            SystemListener::new(system.id, server.address.clone());
+                        let handle = tokio::spawn(system_listener.listen());
 
-                        system_listeners_ref.insert(system.id, system_listener);
+                        self.system_listeners.insert(system.id, handle);
+
                         println!("{} started system listener", system.id);
                     }
-                })
-        });
+                }
+            }
 
-        println!("{:?}", system_listeners.keys())
+            // retain
+
+            // create new
+        }
     }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct SystemDTO {
-    name: String,
-    id: i32,
-    mode: String,
-    players: i32,
-    unlisted: bool,
-    open: bool,
-    survival: bool,
-    time: i32,
-    criminal_activity: i32,
-    mod_id: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct UsageDTO {
-    cpu: i32,
-    memory: i32,
-    ctime: Option<i32>,
-    elapsed: Option<f64>,
-    timestamp: Option<i64>,
-    pid: Option<i32>,
-    ppid: Option<i32>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ServerDTO {
-    location: String,
-    address: String,
-    current_players: i32,
-    systems: Vec<SystemDTO>,
-    usage: UsageDTO,
 }

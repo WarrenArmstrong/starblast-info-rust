@@ -1,9 +1,18 @@
-pub mod listener;
-pub mod system_listener;
+#![allow(unused)]
+
+mod error;
+mod listener;
+mod utils;
+
+use error::Result;
+use listener::Listener;
+use tokio::join;
 
 #[tokio::main]
-async fn main() {
-    let listen_simstatus_handle = tokio::spawn(listener::listen_simstatus());
+async fn main() -> Result<()> {
+    let listener = Listener::new();
 
-    let _ = listen_simstatus_handle.await;
+    join!(tokio::spawn(listener.listen()));
+
+    Ok(())
 }
