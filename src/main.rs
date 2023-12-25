@@ -5,14 +5,23 @@ mod listener;
 mod utils;
 
 use error::Result;
-use listener::Listener;
+use listener::listen;
 use tokio::join;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let listener = Listener::new();
+    let listener = listen();
 
-    join!(tokio::spawn(listener.listen()));
+    let mut rx = listener.rx.clone();
+
+    loop {
+        println!("{:?}", *rx.borrow_and_update());
+        if rx.changed().await.is_err() {
+            break;
+        }
+    }
+
+    join!(listener.handle);
 
     Ok(())
 }
