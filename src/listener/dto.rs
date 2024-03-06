@@ -158,7 +158,7 @@ pub struct WSWelcomeModeDTO {
     pub strafe: f64,
     pub release_crystal: bool,
     pub large_grid: bool,
-    pub bouncing_lasers: i32,
+    pub bouncing_lasers: f64,
     pub max_tier_lives: i32,
     pub auto_assign_teams: bool,
     pub station_size: i32,

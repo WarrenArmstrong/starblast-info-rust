@@ -188,7 +188,7 @@ fn get_initial_message(system_id: i32) -> Result<String, SJError> {
     let player_name = NAMES[rng.gen_range(0..NAMES.len())];
 
     let initial_message = json!({
-        "name": "ùov()",
+        "name": "ojct:4",
         "data": {
             "mode": "join",
             "player_name": player_name,
